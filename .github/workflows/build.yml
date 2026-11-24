@@ -1,4 +1,4 @@
-name: Build RTL8812BU GKI Compatible (ELF kcrctab CRC)
+name: Build RTL8812BU GKI Compatible (ELF kcrctab CRC Fixed)
 on: [workflow_dispatch]
 
 jobs:
@@ -54,22 +54,7 @@ jobs:
           import subprocess, struct
 
           ko = "'"$CFG_KO"'"
-          # 1. Получаем адреса секций ELF из readelf
           sec_out = subprocess.check_output(["readelf", "-SW", ko], text=True)
-          sections = {}
-          for line in sec_out.splitlines():
-              if "]" in line:
-                  parts = line.split("]")[1].split()
-                  if len(parts) >= 6:
-                      name, _, addr, off, size = parts[0], parts[1], int(parts[2], 16), int(parts[3], 16), int(parts[4], 16)
-                      sections[name] = (off, size)
-
-          # 2. Находим символы __crc_* и читаем их 4-байтные значения CRC (в ядре 6.6 могут быть абсолютные SHN_ABS или в секциях __kcrctab*)
-          sym_out = subprocess.check_output(["readelf", "-sW", ko], text=True)
-          with open(ko, "rb") as f:
-              data = f.read()
-
-          # Карта индексов секций
           idx_map = {}
           for line in sec_out.splitlines():
               if "[" in line and "]" in line:
@@ -77,7 +62,14 @@ jobs:
                   if idx_str.isdigit():
                       parts = line.split("]")[1].split()
                       if len(parts) >= 6:
-                          idx_map[idx_str] = (parts[0], int(parts[3], 16))
+                          try:
+                              idx_map[idx_str] = (parts[0], int(parts[3], 16))
+                          except ValueError:
+                              pass
+
+          sym_out = subprocess.check_output(["readelf", "-sW", ko], text=True)
+          with open(ko, "rb") as f:
+              data = f.read()
 
           real = {}
           for line in sym_out.splitlines():
