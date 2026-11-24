@@ -1,4 +1,4 @@
-name: Build RTL8812BU GKI Compatible (Clean Macro Stubs)
+name: Build RTL8812BU GKI Compatible (Fixed CRC Index)
 on: [workflow_dispatch]
 
 jobs:
@@ -49,12 +49,11 @@ jobs:
 
       - name: Patch Symvers from Phone cfg80211.ko & Build Driver
         run: |
-          # 1. Подменяем CRC символов в Module.symvers на реальные значения из cfg80211.ko телефона
-          CFG_KO=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -name "cfg80211.ko" | head -n 1)
-          echo "Found cfg80211.ko: $CFG_KO"
-          if [ -n "$CFG_KO" ]; then
-            modprobe --dump-modversions "$CFG_KO" > /tmp/real_crc.txt
-            python3 -c '
+          CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
+          echo "Checking cfg80211.ko at: $CFG_KO"
+          modprobe --dump-modversions "$CFG_KO" > /tmp/real_crc.txt
+          head -n 5 /tmp/real_crc.txt
+          python3 -c '
           real = {}
           with open("/tmp/real_crc.txt") as f:
               for line in f:
@@ -74,10 +73,8 @@ jobs:
                   f.write("\t".join(cols))
           print("Patched symbols count:", patched)
           '
-            grep "wiphy_new_nm" "$HOME/build/kernel/Module.symvers" || true
-          fi
+          grep "wiphy_new_nm" "$HOME/build/kernel/Module.symvers"
 
-          # 2. Скачиваем драйвер и переопределяем filp_open / kernel_read / kernel_write через макросы
           rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
           DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
