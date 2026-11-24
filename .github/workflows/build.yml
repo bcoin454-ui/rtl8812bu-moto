@@ -1,16 +1,17 @@
-name: Build RTL8812BU & GKI Kernel (c901ea41aa32)
+name: Build RTL8812BU with Stock Config (Ubuntu 24.04)
 on: [workflow_dispatch]
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
+      - name: Checkout Repo (to get stock_config)
+        uses: actions/checkout@v4
+
       - name: Install tools and Clang 18
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves lsb-release software-properties-common gnupg
-          D_LLVM="apt.llvm.org"
-          wget -qO- "https://${D_LLVM}/llvm.sh" | sudo bash -s 18
+          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves clang-18 lld-18 llvm-18
           sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
           sudo ln -sf /usr/bin/ld.lld-18 /usr/bin/ld.lld
           sudo ln -sf /usr/bin/llvm-ar-18 /usr/bin/llvm-ar
@@ -20,15 +21,7 @@ jobs:
           sudo ln -sf /usr/bin/llvm-objdump-18 /usr/bin/llvm-objdump
           sudo ln -sf /usr/bin/llvm-readelf-18 /usr/bin/llvm-readelf
 
-      - name: Cache Built Kernel
-        id: kernel-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/build/kernel
-          key: gki-6.6.118-c901ea41aa32-cfg80211-v1
-
-      - name: Download & Build Kernel (if not cached)
-        if: steps.kernel-cache.outputs.cache-hit != 'true'
+      - name: Download Exact Kernel Archive
         run: |
           mkdir -p ~/build/kernel && cd ~/build/kernel
           SUB1="android"
@@ -37,15 +30,16 @@ jobs:
           wget -q "https://${SUB1}.${DOM1}${P2}" -O kernel.tar.gz
           tar -xzf kernel.tar.gz && rm kernel.tar.gz
 
-          make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
-          scripts/config --set-str LOCALVERSION "-android15-8-gc901ea41aa32-ab15981388-4k"
-          scripts/config -d LOCALVERSION_AUTO -d DEBUG_INFO_BTF -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE -e RFKILL -e CFG80211 -e MAC80211
+      - name: Prepare Kernel with Stock Config
+        run: |
+          cp stock_config ~/build/kernel/.config
+          cd ~/build/kernel
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 modules_prepare
 
       - name: Build Driver
         run: |
-          rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
+          mkdir -p ~/build && cd ~/build
           DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
           git clone --depth=1 "https://${DOM3}${P4}" driver
@@ -62,11 +56,9 @@ jobs:
             KSRC=$HOME/build/kernel \
             KVER="6.6.118-android15-8-gc901ea41aa32-ab15981388-4k"
 
-      - name: Upload Files
+      - name: Upload Driver
         uses: actions/upload-artifact@v4
         with:
-          name: rtl8812bu-and-kernel
-          path: |
-            ~/build/driver/88x2bu.ko
-            ~/build/kernel/arch/arm64/boot/Image
-            
+          name: rtl8812bu-stock-config
+          path: ~/build/driver/88x2bu.ko
+          
