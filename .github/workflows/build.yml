@@ -1,4 +1,4 @@
-name: Build RTL8812BU GKI Compatible (No File Ops + Real Symvers)
+name: Build RTL8812BU GKI Compatible (All File Ops + Verified Symvers)
 on: [workflow_dispatch]
 
 jobs:
@@ -49,30 +49,35 @@ jobs:
 
       - name: Patch Symvers from Phone cfg80211.ko & Build Driver
         run: |
-          # 1. Подменяем CRC символов в Module.symvers на реальные значения из cfg80211.ko телефона
-          if [ -f "$GITHUB_WORKSPACE/cfg80211.ko" ]; then
-            modprobe --dump-modversions "$GITHUB_WORKSPACE/cfg80211.ko" > /tmp/real_crc.txt
+          # 1. Ищем cfg80211.ko в репозитории и подменяем CRC в Module.symvers
+          CFG_KO=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -name "cfg80211.ko" | head -n 1)
+          echo "Found cfg80211.ko: $CFG_KO"
+          if [ -n "$CFG_KO" ]; then
+            modprobe --dump-modversions "$CFG_KO" > /tmp/real_crc.txt
             python3 -c '
           real = {}
           with open("/tmp/real_crc.txt") as f:
               for line in f:
                   parts = line.strip().split()
                   if len(parts) == 2:
-                      real[parts[1]] = parts[0]
+                      real[parts[1]] = parts[0].lower()
           sym_path = "'"$HOME"'/build/kernel/Module.symvers"
           with open(sym_path) as f:
               lines = f.readlines()
+          patched = 0
           with open(sym_path, "w") as f:
               for line in lines:
                   cols = line.split("\t")
                   if len(cols) >= 2 and cols[1] in real:
                       cols[0] = real[cols[1]]
+                      patched += 1
                   f.write("\t".join(cols))
-          print("Patched symbols count:", len(real))
+          print("Patched symbols count:", patched)
           '
+            grep "wiphy_new_nm" "$HOME/build/kernel/Module.symvers" || true
           fi
 
-          # 2. Скачиваем драйвер и отключаем запрещённые в Android GKI filp_open / kernel_read / kernel_write
+          # 2. Скачиваем драйвер и отключаем filp_open / kernel_read / kernel_write ВО ВСЕХ файлах os_dep/
           rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
           DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
@@ -80,13 +85,17 @@ jobs:
           cd driver
 
           python3 -c '
-          with open("os_dep/linux/os_intfs.c", "r") as f:
-              code = f.read()
-          code = code.replace("filp_open(", "(NULL)/*filp_open*/(")
-          code = code.replace("kernel_read(", "(-1)/*kernel_read*/(")
-          code = code.replace("kernel_write(", "(-1)/*kernel_write*/(")
-          with open("os_dep/linux/os_intfs.c", "w") as f:
-              f.write(code)
+          import glob
+          for path in glob.glob("os_dep/**/*.c", recursive=True):
+              with open(path, "r") as f:
+                  code = f.read()
+              new_code = code.replace("filp_open(", "((struct file *)NULL)/*filp_open*/(")
+              new_code = new_code.replace("kernel_read(", "(-1)/*kernel_read*/(")
+              new_code = new_code.replace("kernel_write(", "(-1)/*kernel_write*/(")
+              if new_code != code:
+                  print("Patched file:", path)
+                  with open(path, "w") as f:
+                      f.write(new_code)
           '
 
           sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/' Makefile
