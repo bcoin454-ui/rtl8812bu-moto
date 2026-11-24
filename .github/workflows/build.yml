@@ -20,7 +20,15 @@ jobs:
           sudo ln -sf /usr/bin/llvm-objdump-18 /usr/bin/llvm-objdump
           sudo ln -sf /usr/bin/llvm-readelf-18 /usr/bin/llvm-readelf
 
-      - name: Download Exact Kernel Archive (15 sec)
+      - name: Cache Built Kernel
+        id: kernel-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/build/kernel
+          key: gki-6.6.118-c901ea41aa32-cfg80211-v1
+
+      - name: Download & Build Kernel (if not cached)
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/build/kernel && cd ~/build/kernel
           SUB1="android"
@@ -29,18 +37,15 @@ jobs:
           wget -q "https://${SUB1}.${DOM1}${P2}" -O kernel.tar.gz
           tar -xzf kernel.tar.gz && rm kernel.tar.gz
 
-      - name: Build Kernel and Symvers
-        run: |
-          cd ~/build/kernel
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
           scripts/config --set-str LOCALVERSION "-android15-8-gc901ea41aa32-ab15981388-4k"
-          scripts/config -d LOCALVERSION_AUTO -d DEBUG_INFO_BTF -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE
+          scripts/config -d LOCALVERSION_AUTO -d DEBUG_INFO_BTF -d LTO_CLANG_FULL -d LTO_CLANG_THIN -e LTO_NONE -e RFKILL -e CFG80211 -e MAC80211
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
       - name: Build Driver
         run: |
-          cd ~/build
+          rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
           DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
           git clone --depth=1 "https://${DOM3}${P4}" driver
