@@ -34,9 +34,14 @@ jobs:
           mkdir -p ~/build/kernel && cd ~/build/kernel
           SUB1="android"
           DOM1="googlesource.com"
-          P2="/kernel/common/+archive/c901ea41aa32.tar.gz"
-          wget -q "https://${SUB1}.${DOM1}${P2}" -O kernel.tar.gz
-          tar -xzf kernel.tar.gz && rm kernel.tar.gz
+          P2="/kernel/common"
+          git clone --depth=500 -b android15-6.6 "https://${SUB1}.${DOM1}${P2}" .
+          FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
+          if [ -z "$FULL_HASH" ]; then
+            git fetch --unshallow
+            FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
+          fi
+          git checkout "$FULL_HASH"
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
