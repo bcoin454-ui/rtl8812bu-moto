@@ -1,4 +1,4 @@
-name: Build RTL8812BU GKI Compatible (Fixed CRC Index)
+name: Build RTL8812BU GKI Compatible (ELF kcrctab CRC)
 on: [workflow_dispatch]
 
 jobs:
@@ -11,7 +11,7 @@ jobs:
       - name: Install tools and Clang 18
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves clang-18 lld-18 llvm-18 kmod
+          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves clang-18 lld-18 llvm-18 kmod binutils
           sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
           sudo ln -sf /usr/bin/ld.lld-18 /usr/bin/ld.lld
           sudo ln -sf /usr/bin/llvm-ar-18 /usr/bin/llvm-ar
@@ -50,16 +50,55 @@ jobs:
       - name: Patch Symvers from Phone cfg80211.ko & Build Driver
         run: |
           CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
-          echo "Checking cfg80211.ko at: $CFG_KO"
-          modprobe --dump-modversions "$CFG_KO" > /tmp/real_crc.txt
-          head -n 5 /tmp/real_crc.txt
           python3 -c '
+          import subprocess, struct
+
+          ko = "'"$CFG_KO"'"
+          # 1. Получаем адреса секций ELF из readelf
+          sec_out = subprocess.check_output(["readelf", "-SW", ko], text=True)
+          sections = {}
+          for line in sec_out.splitlines():
+              if "]" in line:
+                  parts = line.split("]")[1].split()
+                  if len(parts) >= 6:
+                      name, _, addr, off, size = parts[0], parts[1], int(parts[2], 16), int(parts[3], 16), int(parts[4], 16)
+                      sections[name] = (off, size)
+
+          # 2. Находим символы __crc_* и читаем их 4-байтные значения CRC (в ядре 6.6 могут быть абсолютные SHN_ABS или в секциях __kcrctab*)
+          sym_out = subprocess.check_output(["readelf", "-sW", ko], text=True)
+          with open(ko, "rb") as f:
+              data = f.read()
+
+          # Карта индексов секций
+          idx_map = {}
+          for line in sec_out.splitlines():
+              if "[" in line and "]" in line:
+                  idx_str = line.split("[")[1].split("]")[0].strip()
+                  if idx_str.isdigit():
+                      parts = line.split("]")[1].split()
+                      if len(parts) >= 6:
+                          idx_map[idx_str] = (parts[0], int(parts[3], 16))
+
           real = {}
-          with open("/tmp/real_crc.txt") as f:
-              for line in f:
-                  parts = line.strip().split()
-                  if len(parts) == 2:
-                      real[parts[1]] = parts[0].lower()
+          for line in sym_out.splitlines():
+              parts = line.split()
+              if len(parts) >= 8 and parts[7].startswith("__crc_"):
+                  sym_name = parts[7][6:]
+                  val = int(parts[1], 16)
+                  ndx = parts[6]
+                  if ndx == "ABS":
+                      crc = val & 0xffffffff
+                  elif ndx in idx_map:
+                      sec_off = idx_map[ndx][1]
+                      crc = struct.unpack("<I", data[sec_off + val : sec_off + val + 4])[0]
+                  else:
+                      continue
+                  real[sym_name] = f"0x{crc:08x}"
+
+          print("Extracted exported CRCs from cfg80211.ko:", len(real))
+          if "wiphy_new_nm" in real:
+              print("Real wiphy_new_nm CRC:", real["wiphy_new_nm"])
+
           sym_path = "'"$HOME"'/build/kernel/Module.symvers"
           with open(sym_path) as f:
               lines = f.readlines()
@@ -71,9 +110,8 @@ jobs:
                       cols[0] = real[cols[1]]
                       patched += 1
                   f.write("\t".join(cols))
-          print("Patched symbols count:", patched)
+          print("Patched Module.symvers entries:", patched)
           '
-          grep "wiphy_new_nm" "$HOME/build/kernel/Module.symvers"
 
           rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
           DOM3="github.com"
