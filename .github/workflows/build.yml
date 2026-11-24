@@ -1,17 +1,17 @@
-name: Build RTL8812BU with Stock Config (Export All Symbols)
+name: Build RTL8812BU GKI Compatible (No File Ops + Real Symvers)
 on: [workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout Repo (to get stock_config)
+      - name: Checkout Repo (stock_config & cfg80211.ko)
         uses: actions/checkout@v4
 
       - name: Install tools and Clang 18
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves clang-18 lld-18 llvm-18
+          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves clang-18 lld-18 llvm-18 kmod
           sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
           sudo ln -sf /usr/bin/ld.lld-18 /usr/bin/ld.lld
           sudo ln -sf /usr/bin/llvm-ar-18 /usr/bin/llvm-ar
@@ -39,10 +39,7 @@ jobs:
           git remote add origin "https://${SUB1}.${DOM1}${P2}"
           git fetch --depth=100 origin "refs/heads/android15-6.6-2026-07:refs/remotes/origin/july" "+refs/tags/android15-6.6-2026-07_r*:refs/tags/android15-6.6-2026-07_r*"
           FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
-          if [ -z "$FULL_HASH" ]; then
-            FULL_HASH=$(git rev-parse origin/july)
-          fi
-          echo "Checking out: $FULL_HASH"
+          [ -z "$FULL_HASH" ] && FULL_HASH=$(git rev-parse origin/july)
           git checkout "$FULL_HASH"
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
@@ -50,13 +47,47 @@ jobs:
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
-      - name: Build Driver
+      - name: Patch Symvers from Phone cfg80211.ko & Build Driver
         run: |
+          # 1. Подменяем CRC символов в Module.symvers на реальные значения из cfg80211.ko телефона
+          if [ -f "$GITHUB_WORKSPACE/cfg80211.ko" ]; then
+            modprobe --dump-modversions "$GITHUB_WORKSPACE/cfg80211.ko" > /tmp/real_crc.txt
+            python3 -c '
+          real = {}
+          with open("/tmp/real_crc.txt") as f:
+              for line in f:
+                  parts = line.strip().split()
+                  if len(parts) == 2:
+                      real[parts[1]] = parts[0]
+          sym_path = "'"$HOME"'/build/kernel/Module.symvers"
+          with open(sym_path) as f:
+              lines = f.readlines()
+          with open(sym_path, "w") as f:
+              for line in lines:
+                  cols = line.split("\t")
+                  if len(cols) >= 2 and cols[1] in real:
+                      cols[0] = real[cols[1]]
+                  f.write("\t".join(cols))
+          print("Patched symbols count:", len(real))
+          '
+          fi
+
+          # 2. Скачиваем драйвер и отключаем запрещённые в Android GKI filp_open / kernel_read / kernel_write
           rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
           DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
           git clone --depth=1 "https://${DOM3}${P4}" driver
           cd driver
+
+          python3 -c '
+          with open("os_dep/linux/os_intfs.c", "r") as f:
+              code = f.read()
+          code = code.replace("filp_open(", "(NULL)/*filp_open*/(")
+          code = code.replace("kernel_read(", "(-1)/*kernel_read*/(")
+          code = code.replace("kernel_write(", "(-1)/*kernel_write*/(")
+          with open("os_dep/linux/os_intfs.c", "w") as f:
+              f.write(code)
+          '
 
           sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/' Makefile
           sed -i 's/CONFIG_POWER_SAVING = y/CONFIG_POWER_SAVING = n/' Makefile
@@ -72,6 +103,6 @@ jobs:
       - name: Upload Driver
         uses: actions/upload-artifact@v4
         with:
-          name: rtl8812bu-stock-config
+          name: rtl8812bu-gki-ready
           path: ~/build/driver/88x2bu.ko
           
