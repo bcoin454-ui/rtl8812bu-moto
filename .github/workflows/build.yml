@@ -1,4 +1,4 @@
-name: Build RTL8812BU with Stock Config (Full Symvers)
+name: Build RTL8812BU with Stock Config (Fixed Keys)
 on: [workflow_dispatch]
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/build/kernel
-          key: stock-gki-6.6.118-c901ea41aa32-v3
+          key: stock-gki-6.6.118-c901ea41aa32-v4
 
       - name: Download & Build Kernel with Stock Config
         if: steps.kernel-cache.outputs.cache-hit != 'true'
@@ -37,7 +37,6 @@ jobs:
           P2="/kernel/common"
           git init
           git remote add origin "https://${SUB1}.${DOM1}${P2}"
-          # Скачиваем именно июльскую релизную ветку 2026-07 и её теги
           git fetch --depth=100 origin "refs/heads/android15-6.6-2026-07:refs/remotes/origin/july" "+refs/tags/android15-6.6-2026-07_r*:refs/tags/android15-6.6-2026-07_r*"
           FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
           if [ -z "$FULL_HASH" ]; then
@@ -47,6 +46,8 @@ jobs:
           git checkout "$FULL_HASH"
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
+          # Убираем привязку к приватным сертификатам Google/Motorola, вызывающую ошибку сборки
+          scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS ""
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
