@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/build/kernel
-          key: stock-gki-6.6.118-c901ea41aa32-v1
+          key: stock-gki-6.6.118-c901ea41aa32-v2
 
       - name: Download & Build Kernel with Stock Config
         if: steps.kernel-cache.outputs.cache-hit != 'true'
@@ -35,12 +35,21 @@ jobs:
           SUB1="android"
           DOM1="googlesource.com"
           P2="/kernel/common"
-          git clone --depth=500 -b android15-6.6 "https://${SUB1}.${DOM1}${P2}" .
+          git init
+          git remote add origin "https://${SUB1}.${DOM1}${P2}"
+          # Скачиваем все ветки android15-6.6* (включая релизные ветки 2026-07 / 2026-08) с небольшой глубиной
+          git fetch --depth=50 origin "+refs/heads/android15-6.6*:refs/remotes/origin/android15-6.6*"
           FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
           if [ -z "$FULL_HASH" ]; then
-            git fetch --unshallow
+            echo "Exact hash not in top 50, fetching deeper..."
+            git fetch --depth=300 origin "+refs/heads/android15-6.6*:refs/remotes/origin/android15-6.6*"
             FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
           fi
+          if [ -z "$FULL_HASH" ]; then
+            echo "Fallback to latest android15-6.6..."
+            FULL_HASH=$(git rev-parse origin/android15-6.6)
+          fi
+          echo "Checking out: $FULL_HASH"
           git checkout "$FULL_HASH"
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
