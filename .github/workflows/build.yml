@@ -1,4 +1,4 @@
-name: Build RTL8812BU with Stock Config (Fixed Keys)
+name: Build RTL8812BU with Stock Config (Fixed ABI)
 on: [workflow_dispatch]
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/build/kernel
-          key: stock-gki-6.6.118-c901ea41aa32-v4
+          key: stock-gki-6.6.118-c901ea41aa32-v5
 
       - name: Download & Build Kernel with Stock Config
         if: steps.kernel-cache.outputs.cache-hit != 'true'
@@ -46,8 +46,7 @@ jobs:
           git checkout "$FULL_HASH"
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
-          # Убираем привязку к приватным сертификатам Google/Motorola, вызывающую ошибку сборки
-          scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS ""
+          scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" --set-str UNUSED_KSYMS_WHITELIST ""
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
