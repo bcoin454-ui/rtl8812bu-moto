@@ -1,4 +1,4 @@
-name: Build RTL8812BU with Stock Config (Ubuntu 24.04)
+name: Build RTL8812BU with Stock Config (Full Symvers)
 on: [workflow_dispatch]
 
 jobs:
@@ -21,7 +21,15 @@ jobs:
           sudo ln -sf /usr/bin/llvm-objdump-18 /usr/bin/llvm-objdump
           sudo ln -sf /usr/bin/llvm-readelf-18 /usr/bin/llvm-readelf
 
-      - name: Download Exact Kernel Archive
+      - name: Cache Built Kernel
+        id: kernel-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/build/kernel
+          key: stock-gki-6.6.118-c901ea41aa32-v1
+
+      - name: Download & Build Kernel with Stock Config
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/build/kernel && cd ~/build/kernel
           SUB1="android"
@@ -30,16 +38,13 @@ jobs:
           wget -q "https://${SUB1}.${DOM1}${P2}" -O kernel.tar.gz
           tar -xzf kernel.tar.gz && rm kernel.tar.gz
 
-      - name: Prepare Kernel with Stock Config
-        run: |
-          cp stock_config ~/build/kernel/.config
-          cd ~/build/kernel
+          cp "$GITHUB_WORKSPACE/stock_config" .config
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 modules_prepare
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
       - name: Build Driver
         run: |
-          mkdir -p ~/build && cd ~/build
+          rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
           DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
           git clone --depth=1 "https://${DOM3}${P4}" driver
