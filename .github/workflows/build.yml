@@ -1,4 +1,4 @@
-name: Build RTL8812BU GKI Compatible (All File Ops + Verified Symvers)
+name: Build RTL8812BU GKI Compatible (Clean Macro Stubs)
 on: [workflow_dispatch]
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
 
       - name: Patch Symvers from Phone cfg80211.ko & Build Driver
         run: |
-          # 1. Ищем cfg80211.ko в репозитории и подменяем CRC в Module.symvers
+          # 1. Подменяем CRC символов в Module.symvers на реальные значения из cfg80211.ko телефона
           CFG_KO=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -name "cfg80211.ko" | head -n 1)
           echo "Found cfg80211.ko: $CFG_KO"
           if [ -n "$CFG_KO" ]; then
@@ -77,26 +77,22 @@ jobs:
             grep "wiphy_new_nm" "$HOME/build/kernel/Module.symvers" || true
           fi
 
-          # 2. Скачиваем драйвер и отключаем filp_open / kernel_read / kernel_write ВО ВСЕХ файлах os_dep/
+          # 2. Скачиваем драйвер и переопределяем filp_open / kernel_read / kernel_write через макросы
           rm -rf ~/build/driver && mkdir -p ~/build && cd ~/build
           DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
           git clone --depth=1 "https://${DOM3}${P4}" driver
           cd driver
 
-          python3 -c '
-          import glob
-          for path in glob.glob("os_dep/**/*.c", recursive=True):
-              with open(path, "r") as f:
-                  code = f.read()
-              new_code = code.replace("filp_open(", "((struct file *)NULL)/*filp_open*/(")
-              new_code = new_code.replace("kernel_read(", "(-1)/*kernel_read*/(")
-              new_code = new_code.replace("kernel_write(", "(-1)/*kernel_write*/(")
-              if new_code != code:
-                  print("Patched file:", path)
-                  with open(path, "w") as f:
-                      f.write(new_code)
-          '
+          cat << 'EOF' >> include/osdep_service_linux.h
+
+          #undef filp_open
+          #define filp_open(p, f, m) ERR_PTR(-ENOENT)
+          #undef kernel_read
+          #define kernel_read(f, b, c, p) (-EPERM)
+          #undef kernel_write
+          #define kernel_write(f, b, c, p) (-EPERM)
+          EOF
 
           sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/' Makefile
           sed -i 's/CONFIG_POWER_SAVING = y/CONFIG_POWER_SAVING = n/' Makefile
