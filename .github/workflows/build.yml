@@ -5,25 +5,28 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Install tools
+      - name: Install tools and Clang 18
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves
-
-      - name: Download AOSP Clang
-        run: |
-          mkdir -p ~/build/clang && cd ~/build/clang
-          H1="https://googlesource.com"
-          P1="/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz"
-          wget -q "${H1}${P1}" -O clang.tar.gz
-          tar -xzf clang.tar.gz && rm clang.tar.gz
+          sudo apt-get install -y bc bison flex libssl-dev make git wget curl python3 xz-utils zstd cpio libelf-dev dwarves lsb-release software-properties-common gnupg
+          D_LLVM="apt.llvm.org"
+          wget -qO- "https://${D_LLVM}/llvm.sh" | sudo bash -s 18
+          sudo ln -sf /usr/bin/clang-18 /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-18 /usr/bin/ld.lld
+          sudo ln -sf /usr/bin/llvm-ar-18 /usr/bin/llvm-ar
+          sudo ln -sf /usr/bin/llvm-nm-18 /usr/bin/llvm-nm
+          sudo ln -sf /usr/bin/llvm-strip-18 /usr/bin/llvm-strip
+          sudo ln -sf /usr/bin/llvm-objcopy-18 /usr/bin/llvm-objcopy
+          sudo ln -sf /usr/bin/llvm-objdump-18 /usr/bin/llvm-objdump
+          sudo ln -sf /usr/bin/llvm-readelf-18 /usr/bin/llvm-readelf
 
       - name: Download Exact Kernel Source & Google Symvers
         run: |
           mkdir -p ~/build/kernel && cd ~/build/kernel
-          H1="https://googlesource.com"
+          SUB1="android"
+          DOM1="googlesource.com"
           P2="/kernel/common"
-          git clone --depth=200 -b android15-6.6 "${H1}${P2}" .
+          git clone --depth=200 -b android15-6.6 "https://${SUB1}.${DOM1}${P2}" .
           FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
           if [ -n "$FULL_HASH" ]; then
             git checkout "$FULL_HASH"
@@ -32,15 +35,15 @@ jobs:
             git checkout $(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
           fi
 
-          H2="https://android.com"
+          SUB2="ci"
+          DOM2="android.com"
           P3="/builds/submitted/15981388/kernel_aarch64/latest/raw"
-          curl -fSL "${H2}${P3}/Module.symvers" -o Module.symvers
-          curl -fSL "${H2}${P3}/gki_defconfig" -o arch/arm64/configs/gki_defconfig
+          curl -fSL "https://${SUB2}.${DOM2}${P3}/Module.symvers" -o Module.symvers
+          curl -fSL "https://${SUB2}.${DOM2}${P3}/gki_defconfig" -o arch/arm64/configs/gki_defconfig
 
       - name: Prepare Kernel Headers
         run: |
           cd ~/build/kernel
-          export PATH="$HOME/build/clang/bin:$PATH"
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
           scripts/config --set-str LOCALVERSION "-android15-8-gc901ea41aa32-ab15981388-4k"
           scripts/config -d LOCALVERSION_AUTO
@@ -50,10 +53,9 @@ jobs:
       - name: Build Driver
         run: |
           cd ~/build
-          export PATH="$HOME/build/clang/bin:$PATH"
-          H3="https://github.com"
+          DOM3="github.com"
           P4="/morrownr/88x2bu-20210702.git"
-          git clone --depth=1 "${H3}${P4}" driver
+          git clone --depth=1 "https://${DOM3}${P4}" driver
           cd driver
 
           sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/' Makefile
