@@ -1,4 +1,4 @@
-name: Build RTL8812BU Driver (ab15981388)
+name: Build RTL8812BU & GKI Kernel (c901ea41aa32)
 on: [workflow_dispatch]
 
 jobs:
@@ -20,35 +20,23 @@ jobs:
           sudo ln -sf /usr/bin/llvm-objdump-18 /usr/bin/llvm-objdump
           sudo ln -sf /usr/bin/llvm-readelf-18 /usr/bin/llvm-readelf
 
-      - name: Download Exact Kernel Source & Google Symvers
+      - name: Download Exact Kernel Archive (15 sec)
         run: |
           mkdir -p ~/build/kernel && cd ~/build/kernel
           SUB1="android"
           DOM1="googlesource.com"
-          P2="/kernel/common"
-          git clone --depth=200 -b android15-6.6 "https://${SUB1}.${DOM1}${P2}" .
-          FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
-          if [ -n "$FULL_HASH" ]; then
-            git checkout "$FULL_HASH"
-          else
-            git fetch --unshallow
-            git checkout $(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
-          fi
+          P2="/kernel/common/+archive/c901ea41aa32.tar.gz"
+          wget -q "https://${SUB1}.${DOM1}${P2}" -O kernel.tar.gz
+          tar -xzf kernel.tar.gz && rm kernel.tar.gz
 
-          SUB2="ci"
-          DOM2="android.com"
-          P3="/builds/submitted/15981388/kernel_aarch64/latest/raw"
-          curl -fSL "https://${SUB2}.${DOM2}${P3}/Module.symvers" -o Module.symvers
-          curl -fSL "https://${SUB2}.${DOM2}${P3}/gki_defconfig" -o arch/arm64/configs/gki_defconfig
-
-      - name: Prepare Kernel Headers
+      - name: Build Kernel and Symvers
         run: |
           cd ~/build/kernel
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
           scripts/config --set-str LOCALVERSION "-android15-8-gc901ea41aa32-ab15981388-4k"
           scripts/config -d LOCALVERSION_AUTO
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 modules_prepare
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
       - name: Build Driver
         run: |
@@ -66,13 +54,14 @@ jobs:
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             KCFLAGS="-Wno-error" \
-            KBUILD_EXTRA_SYMBOLS=$HOME/build/kernel/Module.symvers \
             KSRC=$HOME/build/kernel \
             KVER="6.6.118-android15-8-gc901ea41aa32-ab15981388-4k"
 
-      - name: Upload File
+      - name: Upload Files
         uses: actions/upload-artifact@v4
         with:
-          name: rtl8812bu-driver-ab15981388
-          path: ~/build/driver/88x2bu.ko
-          
+          name: rtl8812bu-and-kernel
+          path: |
+            ~/build/driver/88x2bu.ko
+            ~/build/kernel/arch/arm64/boot/Image
+            
