@@ -13,7 +13,7 @@ jobs:
       - name: Download AOSP Clang
         run: |
           mkdir -p ~/build/clang && cd ~/build/clang
-          H1="https://android.googlesource.com"
+          H1="https://googlesource.com"
           P1="/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz"
           wget -q "${H1}${P1}" -O clang.tar.gz
           tar -xzf clang.tar.gz && rm clang.tar.gz
@@ -21,14 +21,18 @@ jobs:
       - name: Download Exact Kernel Source & Google Symvers
         run: |
           mkdir -p ~/build/kernel && cd ~/build/kernel
-          git init
-          H1="https://android.googlesource.com"
+          H1="https://googlesource.com"
           P2="/kernel/common"
-          git remote add origin "${H1}${P2}"
-          git fetch --depth=1 origin c901ea41aa32
-          git checkout FETCH_HEAD
+          git clone --depth=200 -b android15-6.6 "${H1}${P2}" .
+          FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
+          if [ -n "$FULL_HASH" ]; then
+            git checkout "$FULL_HASH"
+          else
+            git fetch --unshallow
+            git checkout $(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
+          fi
 
-          H2="https://ci.android.com"
+          H2="https://android.com"
           P3="/builds/submitted/15981388/kernel_aarch64/latest/raw"
           curl -fSL "${H2}${P3}/Module.symvers" -o Module.symvers
           curl -fSL "${H2}${P3}/gki_defconfig" -o arch/arm64/configs/gki_defconfig
