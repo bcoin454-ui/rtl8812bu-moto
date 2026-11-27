@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/build/kernel
-          key: stock-gki-6.6.118-c901ea41aa32-88x2bu-v1
+          key: stock-gki-6.6.118-c901ea41aa32-88x2bu-v2
 
       - name: Download & Prepare Kernel Source
         if: steps.kernel-cache.outputs.cache-hit != 'true'
@@ -38,17 +38,24 @@ jobs:
           P2="/kernel/common"
           git init
           git remote add origin "https://${SUB1}.${DOM1}${P2}"
-          git fetch --depth=100 origin "refs/heads/android15-6.6-2026-07:refs/remotes/origin/july" "+refs/tags/android15-6.6-2026-07_r*:refs/tags/android15-6.6-2026-07_r*"
+          git fetch --depth=2500 origin "refs/heads/android15-6.6-2026-07:refs/remotes/origin/july" "+refs/tags/android15-6.6-2026-07_r*:refs/tags/android15-6.6-2026-07_r*"
           FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
-          [ -z "$FULL_HASH" ] && FULL_HASH=$(git rev-parse origin/july)
+          if [ -z "$FULL_HASH" ]; then
+            echo "Commit c901ea41aa32 not found in depth 2500, fetching full branch..."
+            git fetch --unshallow origin
+            FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
+          fi
+          echo "Checked out commit: $FULL_HASH"
           git checkout "$FULL_HASH"
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
           scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS --disable WERROR \
             --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" --set-str UNUSED_KSYMS_WHITELIST "" \
+            --set-str LOCALVERSION "-android15-8-gc901ea41aa32-ab15981388-4k" \
             -e RFKILL -e CFG80211
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
+          cat include/config/kernel.release
 
       - name: Inspect core.c:792 & Patch Module.symvers
         run: |
@@ -144,6 +151,7 @@ jobs:
           '
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option" modules
+          modinfo ~/build/driver/88x2bu.ko | grep -E "vermagic|scmversion"
 
       - name: Upload 88x2bu.ko
         uses: actions/upload-artifact@v4
