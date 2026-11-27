@@ -120,17 +120,17 @@ jobs:
           sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/g' Makefile
           sed -i 's/CONFIG_CONCURRENT_MODE = y/CONFIG_CONCURRENT_MODE = n/g' Makefile
           sed -i 's/CONFIG_RTW_DEBUG = y/CONFIG_RTW_DEBUG = n/g' Makefile
+          sed -i 's/-Wno-stringop-overread/-Wno-unknown-warning-option/g' Makefile
+          sed -i 's/-Werror//g' Makefile
 
           python3 -c '
           path = "os_dep/linux/ioctl_cfg80211.c"
           with open(path) as f:
               code = f.read()
 
-          # Исправляем конфликт regulatory_flags и параметров wiphy для ядра 6.6+
           code = code.replace("wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;", "wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;")
           code = code.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed for 6.6")
 
-          # Убеждаемся, что перед wiphy_register очищены конфликтующие флаги
           target = "ret = wiphy_register(wiphy);"
           fix = """wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);
           \twiphy->max_sched_scan_reqs = 0;
@@ -143,7 +143,7 @@ jobs:
               f.write(code)
           '
 
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel modules
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel EXTRA_CFLAGS="-Wno-unknown-warning-option" modules
 
       - name: Upload 88x2bu.ko
         uses: actions/upload-artifact@v4
