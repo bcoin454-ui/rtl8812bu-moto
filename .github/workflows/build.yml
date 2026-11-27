@@ -1,4 +1,4 @@
-name: Build Native RTW88 (RTL8812BU / RTL8822BU) for GKI
+name: Build Patched 88x2bu (morrownr) for Stock cfg80211
 
 on: [workflow_dispatch]
 
@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/build/kernel
-          key: stock-gki-6.6.118-c901ea41aa32-rtw88-v3
+          key: stock-gki-6.6.118-c901ea41aa32-88x2bu-v1
 
       - name: Download & Prepare Kernel Source
         if: steps.kernel-cache.outputs.cache-hit != 'true'
@@ -46,14 +46,14 @@ jobs:
           cp "$GITHUB_WORKSPACE/stock_config" .config
           scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS \
             --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" --set-str UNUSED_KSYMS_WHITELIST "" \
-            -e NETDEVICES -e WLAN -e WLAN_VENDOR_REALTEK -e RFKILL -e CFG80211 \
-            -m CRYPTO_ARC4 -m MAC80211 \
-            -m RTW88 -m RTW88_CORE -m RTW88_USB -m RTW88_8822B -m RTW88_8822BU
+            -e RFKILL -e CFG80211
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
-      - name: Patch Symvers, Embed BCD & Rebuild RTW88 Modules
+      - name: Inspect core.c:792 & Patch Module.symvers
         run: |
+          nl -ba ~/build/kernel/net/wireless/core.c | sed -n '775,810p'
+
           CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
           python3 -c '
           import subprocess, struct, re
@@ -108,32 +108,46 @@ jobs:
           print("Patched Module.symvers entries:", patched)
           '
 
-          cd ~/build/kernel
-          if ! grep -q "_bcd2bin" drivers/net/wireless/realtek/rtw88/main.c; then
-            printf '\nunsigned int _bcd2bin(unsigned char val) { return (val & 0x0f) + (val >> 4) * 10; }\nunsigned char _bin2bcd(unsigned int val) { return ((val / 10) << 4) + val %% 10; }\n' >> drivers/net/wireless/realtek/rtw88/main.c
-          fi
-
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 M=net/mac80211 modules || true
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 M=drivers/net/wireless/realtek/rtw88 modules
-          llvm-nm drivers/net/wireless/realtek/rtw88/rtw88_core.ko | grep "_bcd2bin"
-
-      - name: Collect Modules & Download Firmware
+      - name: Clone, Patch & Build 88x2bu Driver
         run: |
-          mkdir -p ~/build/out/firmware/rtw88
-          cp ~/build/kernel/net/mac80211/mac80211.ko ~/build/out/ 2>/dev/null || true
-          cp ~/build/kernel/drivers/net/wireless/realtek/rtw88/rtw88_core.ko ~/build/out/
-          cp ~/build/kernel/drivers/net/wireless/realtek/rtw88/rtw88_usb.ko ~/build/out/
-          cp ~/build/kernel/drivers/net/wireless/realtek/rtw88/rtw88_8822b.ko ~/build/out/
-          cp ~/build/kernel/drivers/net/wireless/realtek/rtw88/rtw88_8822bu.ko ~/build/out/
+          rm -rf ~/build/driver
+          GH_HOST="github.com"
+          GH_REPO="/morrownr/88x2bu-20210702.git"
+          git clone --depth=1 "https://${GH_HOST}${GH_REPO}" ~/build/driver
+          cd ~/build/driver
 
-          FW_HOST="git.kernel.org"
-          FW_PATH="/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/rtw88/rtw8822b_fw.bin"
-          curl -fL -o ~/build/out/firmware/rtw88/rtw8822b_fw.bin "https://${FW_HOST}${FW_PATH}"
-          ls -lh ~/build/out/firmware/rtw88/rtw8822b_fw.bin
+          sed -i 's/CONFIG_POWER_SAVING = y/CONFIG_POWER_SAVING = n/g' Makefile
+          sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/g' Makefile
+          sed -i 's/CONFIG_CONCURRENT_MODE = y/CONFIG_CONCURRENT_MODE = n/g' Makefile
+          sed -i 's/CONFIG_RTW_DEBUG = y/CONFIG_RTW_DEBUG = n/g' Makefile
 
-      - name: Upload Driver & Firmware Bundle
+          python3 -c '
+          path = "os_dep/linux/ioctl_cfg80211.c"
+          with open(path) as f:
+              code = f.read()
+
+          # Исправляем конфликт regulatory_flags и параметров wiphy для ядра 6.6+
+          code = code.replace("wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;", "wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;")
+          code = code.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed for 6.6")
+
+          # Убеждаемся, что перед wiphy_register очищены конфликтующие флаги
+          target = "ret = wiphy_register(wiphy);"
+          fix = """wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);
+          \twiphy->max_sched_scan_reqs = 0;
+          \t""" + target
+          if target in code:
+              code = code.replace(target, fix)
+              print("Patched wiphy_register in ioctl_cfg80211.c")
+
+          with open(path, "w") as f:
+              f.write(code)
+          '
+
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel modules
+
+      - name: Upload 88x2bu.ko
         uses: actions/upload-artifact@v4
         with:
-          name: rtw88-gki-bundle
-          path: ~/build/out/
+          name: rtl88x2bu-patched-gki
+          path: ~/build/driver/88x2bu.ko
           
