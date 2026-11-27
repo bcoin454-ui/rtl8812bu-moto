@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/build/kernel
-          key: stock-gki-6.6.118-c901ea41aa32-88x2bu-v2
+          key: stock-gki-6.6.118-c901ea41aa32-88x2bu-v3
 
       - name: Download & Prepare Kernel Source
         if: steps.kernel-cache.outputs.cache-hit != 'true'
@@ -40,21 +40,21 @@ jobs:
           git remote add origin "https://${SUB1}.${DOM1}${P2}"
           git fetch --depth=1 origin "refs/tags/android15-6.6.118_r00:refs/tags/android15-6.6.118_r00"
           git checkout "android15-6.6.118_r00"
-          echo "gc901ea41aa32" > .scmversion
+
+          printf '#!/bin/sh\necho "-android15-8-gc901ea41aa32-ab15981388-4k"\n' > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
           scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS --disable WERROR --disable LOCALVERSION_AUTO \
             --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" --set-str UNUSED_KSYMS_WHITELIST "" \
-            --set-str LOCALVERSION "-android15-8-gc901ea41aa32-ab15981388-4k" \
+            --set-str LOCALVERSION "" \
             -e RFKILL -e CFG80211
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
           cat include/config/kernel.release
 
-      - name: Inspect core.c:792 & Patch Module.symvers
+      - name: Patch Module.symvers
         run: |
-          nl -ba ~/build/kernel/net/wireless/core.c | sed -n '775,810p'
-
           CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
           python3 -c '
           import subprocess, struct, re
@@ -109,7 +109,7 @@ jobs:
           print("Patched Module.symvers entries:", patched)
           '
 
-      - name: Clone, Patch & Build 88x2bu Driver
+      - name: Clone, Patch GKI Symbols & Build 88x2bu Driver
         run: |
           rm -rf ~/build/driver
           GH_HOST="github.com"
@@ -125,26 +125,33 @@ jobs:
           sed -i 's/-Werror//g' Makefile
 
           python3 -c '
-          path = "os_dep/linux/ioctl_cfg80211.c"
-          with open(path) as f:
-              code = f.read()
-
-          code = code.replace("wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;", "wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;")
-          code = code.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed for 6.6")
-
+          # 1. Патчим ioctl_cfg80211.c для ядра 6.6
+          p1 = "os_dep/linux/ioctl_cfg80211.c"
+          with open(p1) as f:
+              c1 = f.read()
+          c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;", "wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;")
+          c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed for 6.6")
           target = "ret = wiphy_register(wiphy);"
-          fix = """wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);
-          \twiphy->max_sched_scan_reqs = 0;
-          \t""" + target
-          if target in code:
-              code = code.replace(target, fix)
-              print("Patched wiphy_register in ioctl_cfg80211.c")
+          fix = "wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);\n\twiphy->max_sched_scan_reqs = 0;\n\t" + target
+          if target in c1:
+              c1 = c1.replace(target, fix)
+          with open(p1, "w") as f:
+              f.write(c1)
 
-          with open(path, "w") as f:
-              f.write(code)
+          # 2. Заменяем защищённые символы GKI (filp_open, kernel_read, kernel_write) в osdep_service.c
+          p2 = "os_dep/osdep_service.c"
+          with open(p2) as f:
+              c2 = f.read()
+          c2 = c2.replace("filp_open(", "ERR_PTR(-ENOENT); // filp_open(")
+          c2 = c2.replace("kernel_read(", "-EINVAL; // kernel_read(")
+          c2 = c2.replace("kernel_write(", "-EINVAL; // kernel_write(")
+          with open(p2, "w") as f:
+              f.write(c2)
+          print("Patched GKI protected symbols successfully")
           '
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option" modules
+          llvm-nm -u ~/build/driver/88x2bu.ko | grep -E "filp_open|kernel_read|kernel_write" || echo "Clean: no protected symbols!"
           modinfo ~/build/driver/88x2bu.ko | grep -E "vermagic|scmversion"
 
       - name: Upload 88x2bu.ko
