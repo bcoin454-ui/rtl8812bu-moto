@@ -44,7 +44,7 @@ jobs:
           git checkout "$FULL_HASH"
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
-          scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS \
+          scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS --disable WERROR \
             --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" --set-str UNUSED_KSYMS_WHITELIST "" \
             -e RFKILL -e CFG80211
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
@@ -143,7 +143,7 @@ jobs:
               f.write(code)
           '
 
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel EXTRA_CFLAGS="-Wno-unknown-warning-option" modules
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option" modules
 
       - name: Upload 88x2bu.ko
         uses: actions/upload-artifact@v4
