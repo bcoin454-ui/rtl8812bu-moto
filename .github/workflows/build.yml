@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/build/kernel
-          key: stock-gki-6.6.118-c901ea41aa32-rtw88-v1
+          key: stock-gki-6.6.118-c901ea41aa32-rtw88-v2
 
       - name: Download & Prepare Kernel Source
         if: steps.kernel-cache.outputs.cache-hit != 'true'
@@ -46,9 +46,11 @@ jobs:
           cp "$GITHUB_WORKSPACE/stock_config" .config
           scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS \
             --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" --set-str UNUSED_KSYMS_WHITELIST "" \
-            -e RFKILL -e CFG80211 -m MAC80211 \
+            -e NETDEVICES -e WLAN -e WLAN_VENDOR_REALTEK -e RFKILL -e CFG80211 \
+            -m CRYPTO_ARC4 -m MAC80211 \
             -m RTW88 -m RTW88_CORE -m RTW88_USB -m RTW88_8822B -m RTW88_8822BU
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          grep -E "RTW88|MAC80211|ARC4" .config
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
       - name: Patch Symvers & Rebuild RTW88 Modules with Real CRC
@@ -106,12 +108,14 @@ jobs:
           '
 
           cd ~/build/kernel
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 M=crypto modules || true
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 M=net/mac80211 modules || true
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 M=drivers/net/wireless/realtek/rtw88 modules
 
       - name: Collect Modules & Download Firmware
         run: |
           mkdir -p ~/build/out/firmware/rtw88
+          cp ~/build/kernel/crypto/arc4.ko ~/build/out/ 2>/dev/null || true
           cp ~/build/kernel/net/mac80211/mac80211.ko ~/build/out/ 2>/dev/null || true
           cp ~/build/kernel/drivers/net/wireless/realtek/rtw88/rtw88_core.ko ~/build/out/
           cp ~/build/kernel/drivers/net/wireless/realtek/rtw88/rtw88_usb.ko ~/build/out/
