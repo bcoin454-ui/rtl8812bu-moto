@@ -38,18 +38,12 @@ jobs:
           P2="/kernel/common"
           git init
           git remote add origin "https://${SUB1}.${DOM1}${P2}"
-          git fetch --depth=2500 origin "refs/heads/android15-6.6-2026-07:refs/remotes/origin/july" "+refs/tags/android15-6.6-2026-07_r*:refs/tags/android15-6.6-2026-07_r*"
-          FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
-          if [ -z "$FULL_HASH" ]; then
-            echo "Commit c901ea41aa32 not found in depth 2500, fetching full branch..."
-            git fetch --unshallow origin
-            FULL_HASH=$(git log --all --format="%H" | grep "^c901ea41aa32" | head -n 1)
-          fi
-          echo "Checked out commit: $FULL_HASH"
-          git checkout "$FULL_HASH"
+          git fetch --depth=1 origin "refs/tags/android15-6.6.118_r00:refs/tags/android15-6.6.118_r00"
+          git checkout "android15-6.6.118_r00"
+          echo "gc901ea41aa32" > .scmversion
 
           cp "$GITHUB_WORKSPACE/stock_config" .config
-          scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS --disable WERROR \
+          scripts/config --disable MODULE_SIG --disable MODULE_SIG_ALL --disable TRIM_UNUSED_KSYMS --disable WERROR --disable LOCALVERSION_AUTO \
             --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" --set-str UNUSED_KSYMS_WHITELIST "" \
             --set-str LOCALVERSION "-android15-8-gc901ea41aa32-ab15981388-4k" \
             -e RFKILL -e CFG80211
