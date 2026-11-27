@@ -1,4 +1,3 @@
-
 name: Build Native RTW88 (RTL8812BU / RTL8822BU) for GKI
 
 on: [workflow_dispatch]
@@ -58,21 +57,15 @@ jobs:
         run: |
           CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
           python3 -c '
-          import subprocess, struct
+          import subprocess, struct, re
 
           ko = "'"$CFG_KO"'"
           sec_out = subprocess.check_output(["readelf", "-SW", ko], text=True)
           idx_map = {}
           for line in sec_out.splitlines():
-              if "[" in line and "]" in line:
-                  idx_str = line.split("[").split("]").strip()
-                  if idx_str.isdigit():
-                      parts = line.split("]").split()
-                      if len(parts) >= 6:
-                          try:
-                              idx_map[idx_str] = (parts, int(parts, 16))
-                          except ValueError:
-                              pass
+              m = re.search(r"\[\s*(\d+)\]\s+(\S+)\s+\S+\s+\S+\s+([0-9a-fA-F]+)", line)
+              if m:
+                  idx_map[m.group(1)] = (m.group(2), int(m.group(3), 16))
 
           sym_out = subprocess.check_output(["readelf", "-sW", ko], text=True)
           with open(ko, "rb") as f:
@@ -81,18 +74,21 @@ jobs:
           real = {}
           for line in sym_out.splitlines():
               parts = line.split()
-              if len(parts) >= 8 and parts.startswith("__crc_"):
-                  sym_name = parts[6:]
-                  val = int(parts, 16)
-                  ndx = parts
-                  if ndx == "ABS":
-                      crc = val & 0xffffffff
-                  elif ndx in idx_map:
-                      sec_off = idx_map[ndx]
-                      crc = struct.unpack("<I", data[sec_off + val : sec_off + val + 4])
-                  else:
-                      continue
-                  real[sym_name] = f"0x{crc:08x}"
+              if len(parts) >= 8:
+                  sym_full = parts.pop()
+                  ndx = parts.pop()
+                  if sym_full.startswith("__crc_"):
+                      sym_name = sym_full.replace("__crc_", "", 1)
+                      val = int(parts.pop(1), 16)
+                      if ndx == "ABS":
+                          crc = val & 0xffffffff
+                      elif ndx in idx_map:
+                          sec_name, sec_off = idx_map.get(ndx)
+                          chunk = data[sec_off + val : sec_off + val + 4]
+                          crc = struct.unpack("<I", chunk).pop(0)
+                      else:
+                          continue
+                      real[sym_name] = f"0x{crc:08x}"
 
           sym_path = "'"$HOME"'/build/kernel/Module.symvers"
           with open(sym_path) as f:
@@ -101,9 +97,14 @@ jobs:
           with open(sym_path, "w") as f:
               for line in lines:
                   cols = line.split("\t")
-                  if len(cols) >= 2 and cols in real:
-                      cols = real[cols]
-                      patched += 1
+                  if len(cols) >= 2:
+                      s_name = cols.pop(1)
+                      old_crc = cols.pop(0)
+                      new_crc = real.get(s_name, old_crc)
+                      if new_crc != old_crc:
+                          patched += 1
+                      cols.insert(0, s_name)
+                      cols.insert(0, new_crc)
                   f.write("\t".join(cols))
           print("Patched Module.symvers entries:", patched)
           '
