@@ -85,7 +85,7 @@ jobs:
                       elif ndx in idx_map:
                           sec_name, sec_off = idx_map.get(ndx)
                           chunk = data[sec_off + val : sec_off + val + 4]
-                          crc = struct.unpack("<I", chunk).pop(0)
+                          crc, = struct.unpack("<I", chunk)
                       else:
                           continue
                       real[sym_name] = f"0x{crc:08x}"
