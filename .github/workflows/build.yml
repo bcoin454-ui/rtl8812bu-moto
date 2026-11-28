@@ -51,13 +51,9 @@ jobs:
             -e RFKILL -e CFG80211
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
-          cat include/config/kernel.release
 
-      - name: Show core.c:792 & Patch Module.symvers
+      - name: Patch Module.symvers & Pad cfg80211_ops for Qualcomm OEM Hooks
         run: |
-          echo "=== net/wireless/core.c lines 765-815 ==="
-          nl -ba ~/build/kernel/net/wireless/core.c | sed -n '765,815p'
-
           CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
           python3 -c '
           import subprocess, struct, re
@@ -110,9 +106,23 @@ jobs:
                       cols.insert(0, new_crc)
                   f.write("\t".join(cols))
           print("Patched Module.symvers entries:", patched)
+
+          # Добавляем нулевые OEM-слоты (0x300..0x338) в конец struct cfg80211_ops
+          hdr = "'"$HOME"'/build/kernel/include/net/cfg80211.h"
+          with open(hdr) as f:
+              hcode = f.read()
+          if "qcom_oem_ops_pad" not in hcode:
+              m = re.search(r"struct\s+cfg80211_ops\s*\{.*?\n\};", hcode, re.DOTALL)
+              assert m, "struct cfg80211_ops not found"
+              old_blk = m.group(0)
+              new_blk = old_blk[:-2] + "\n\tvoid *qcom_oem_ops_pad[8];\n};"
+              hcode = hcode.replace(old_blk, new_blk, 1)
+              with open(hdr, "w") as f:
+                  f.write(hcode)
+              print("Padded struct cfg80211_ops with qcom_oem_ops_pad[8]")
           '
 
-      - name: Clone, Patch wiphy_register & Build 88x2bu Driver
+      - name: Clone, Patch & Build 88x2bu Driver
         run: |
           rm -rf ~/build/driver
           GH_HOST="github.com"
@@ -122,7 +132,6 @@ jobs:
 
           sed -i 's/CONFIG_POWER_SAVING = y/CONFIG_POWER_SAVING = n/g' Makefile
           sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/g' Makefile
-          sed -i 's/CONFIG_CONCURRENT_MODE = y/CONFIG_CONCURRENT_MODE = n/g' Makefile
           sed -i 's/CONFIG_RTW_DEBUG = y/CONFIG_RTW_DEBUG = n/g' Makefile
           sed -i 's/-Wno-stringop-overread/-Wno-unknown-warning-option/g' Makefile
           sed -i 's/-Werror//g' Makefile
@@ -145,7 +154,6 @@ jobs:
           \twiphy_register(wiphy)"""
 
           c1_new, count = re.subn(r"wiphy_register\s*\(\s*wiphy\s*\)", fix, c1)
-          print("Patched wiphy_register occurrences:", count)
           assert count > 0, "wiphy_register(wiphy) not found!"
           with open(p1, "w") as f:
               f.write(c1_new)
