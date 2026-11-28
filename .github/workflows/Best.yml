@@ -1,0 +1,22 @@
+name: Inspect Stock cfg80211.ko Offsets
+
+on: [workflow_dispatch]
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repo (cfg80211.ko)
+        uses: actions/checkout@v4
+
+      - name: Install LLVM objdump
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 binutils
+
+      - name: Dump cfg80211_ops & wiphy offsets from stock cfg80211.ko
+        run: |
+          echo "=== Disassembly of wiphy_register (first 85 instructions) ==="
+          llvm-objdump-18 -d "$GITHUB_WORKSPACE/cfg80211.ko" | awk '/<wiphy_register>:/{flag=1} flag{print; count++; if(count>85) exit}'
+          echo "=== Disassembly of nl80211_set_interface (first 65 instructions) ==="
+          llvm-objdump-18 -d "$GITHUB_WORKSPACE/cfg80211.ko" | awk '/<nl80211_set_interface>:/{flag=1} flag{print; count++; if(count>65) exit}'
