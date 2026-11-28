@@ -6,26 +6,16 @@ jobs:
   search:
     runs-on: ubuntu-24.04
     steps:
-      - name: Search MotorolaMobilityLLC & CodeLinaro headers
+      - name: Check MotorolaMobilityLLC git refs directly
         run: |
-          python3 -c '
-          import urllib.request, json
+          GH="https://github.com"
+          ORG="MotorolaMobilityLLC"
+          echo "=== kernel-msm refs ==="
+          git ls-remote --heads --tags "${GH}/${ORG}/kernel-msm.git" | grep -iE "portov|sm4450|parrot|ravelin|v1vt|w1vt|6\.6" | tail -n 30 || true
 
-          def get_json(url):
-              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-              with urllib.request.urlopen(req, timeout=15) as r:
-                  return json.loads(r.read().decode())
+          echo "=== kernel-platform refs ==="
+          git ls-remote --heads --tags "${GH}/${ORG}/kernel-platform.git" 2>/dev/null | grep -iE "portov|sm4450|parrot|ravelin|v1vt|w1vt|6\.6" | tail -n 30 || true
 
-          print("=== MotorolaMobilityLLC kernel/wlan repos ===")
-          repos = get_json("https://github.com")
-          for r in repos:
-              name = r.get("name", "")
-              if any(k in name.lower() for k in ["kernel", "wlan", "qca", "portov", "6.6", "msm", "vendor"]):
-                  print(name, "-> default:", r.get("default_branch"), "| updated:", r.get("updated_at"))
-
-          print("=== Search tags/repos for portov or W1VTS or VVTS ===")
-          res = get_json("https://github.com")
-          for item in res.get("items", []):
-              print(item.get("full_name"), "->", item.get("default_branch"))
-          '
+          echo "=== vendor-qcom-opensource-wlan-qcacld-3.0 refs ==="
+          git ls-remote --heads --tags "${GH}/${ORG}/vendor-qcom-opensource-wlan-qcacld-3.0.git" 2>/dev/null | tail -n 20 || true
           
