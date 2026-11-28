@@ -73,6 +73,9 @@ jobs:
             sed -i "s/#define ${opt}/\/\/ #define ${opt}/g" include/autoconf.h
           done
 
+          sed -i 's/cfg80211_register_netdevice/register_netdevice/g' os_dep/linux/os_intfs.c
+          sed -i 's/cfg80211_unregister_netdevice/unregister_netdevice/g' os_dep/linux/os_intfs.c
+
           python3 -c '
           p2 = "os_dep/osdep_service.c"
           with open(p2) as f:
@@ -85,7 +88,7 @@ jobs:
           '
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option -UCONFIG_IOCTL_CFG80211 -URTW_USE_CFG80211_STA_EVENT -UCONFIG_LAYER2_ROAMING -UCONFIG_RTW_80211K -UCONFIG_RTW_80211R -UCONFIG_RTW_WNM -UCONFIG_RTW_MBO" modules
-          llvm-nm -u ~/build/driver/88x2bu.ko | grep "wiphy_" && exit 1 || echo "Verified: 0 cfg80211 symbols!"
+          llvm-nm -u ~/build/driver/88x2bu.ko | grep -E "wiphy_|cfg80211_" && exit 1 || echo "Verified: 0 cfg80211 symbols!"
 
       - name: Upload 88x2bu.ko
         uses: actions/upload-artifact@v4
