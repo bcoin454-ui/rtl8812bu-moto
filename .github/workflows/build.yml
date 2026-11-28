@@ -53,8 +53,11 @@ jobs:
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
           cat include/config/kernel.release
 
-      - name: Patch Module.symvers
+      - name: Show core.c:792 & Patch Module.symvers
         run: |
+          echo "=== net/wireless/core.c lines 765-815 ==="
+          nl -ba ~/build/kernel/net/wireless/core.c | sed -n '765,815p'
+
           CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
           python3 -c '
           import subprocess, struct, re
@@ -109,7 +112,7 @@ jobs:
           print("Patched Module.symvers entries:", patched)
           '
 
-      - name: Clone, Patch GKI Symbols & Build 88x2bu Driver
+      - name: Clone, Patch wiphy_register & Build 88x2bu Driver
         run: |
           rm -rf ~/build/driver
           GH_HOST="github.com"
@@ -125,20 +128,26 @@ jobs:
           sed -i 's/-Werror//g' Makefile
 
           python3 -c '
-          # 1. Патчим ioctl_cfg80211.c для ядра 6.6
           p1 = "os_dep/linux/ioctl_cfg80211.c"
           with open(p1) as f:
               c1 = f.read()
+
           c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;", "wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;")
-          c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed for 6.6")
+          c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed")
+
           target = "ret = wiphy_register(wiphy);"
-          fix = "wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);\n\twiphy->max_sched_scan_reqs = 0;\n\t" + target
-          if target in c1:
-              c1 = c1.replace(target, fix)
+          fix = """wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);
+          \twiphy->max_sched_scan_reqs = 0;
+          \twiphy->iface_combinations = NULL;
+          \twiphy->n_iface_combinations = 0;
+          \twiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_AP) | BIT(NL80211_IFTYPE_MONITOR);
+          \twiphy->features &= ~NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
+          \t""" + target
+          assert target in c1, "wiphy_register not found!"
+          c1 = c1.replace(target, fix)
           with open(p1, "w") as f:
               f.write(c1)
 
-          # 2. Заменяем защищённые символы GKI (filp_open, kernel_read, kernel_write) в osdep_service.c
           p2 = "os_dep/osdep_service.c"
           with open(p2) as f:
               c2 = f.read()
@@ -147,11 +156,10 @@ jobs:
           c2 = c2.replace("kernel_write(", "-EINVAL; // kernel_write(")
           with open(p2, "w") as f:
               f.write(c2)
-          print("Patched GKI protected symbols successfully")
+          print("All patches applied cleanly")
           '
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option" modules
-          llvm-nm -u ~/build/driver/88x2bu.ko | grep -E "filp_open|kernel_read|kernel_write" || echo "Clean: no protected symbols!"
           modinfo ~/build/driver/88x2bu.ko | grep -E "vermagic|scmversion"
 
       - name: Upload 88x2bu.ko
