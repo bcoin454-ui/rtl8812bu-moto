@@ -1,25 +1,37 @@
-name: Inspect Stock cfg80211.ko Ops Offsets
+name: Find Motorola Portov / SM4450 Kernel Headers
 
 on: [workflow_dispatch]
 
 jobs:
-  inspect:
+  search:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Repo (cfg80211.ko)
         uses: actions/checkout@v4
 
-      - name: Install LLVM objdump
+      - name: Inspect cfg80211.ko strings & search Motorola/Qualcomm repos
         run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-18 binutils
+          echo "=== Strings from stock cfg80211.ko ==="
+          strings "$GITHUB_WORKSPACE/cfg80211.ko" | grep -iE "moto|qcom|portov|parrot|ravelin|sm4450|wlan|version|BUILD" | head -n 30 || true
 
-      - name: Dump cfg80211_ops offsets from stock cfg80211.ko
-        run: |
-          echo "=== cfg80211_change_iface ==="
-          llvm-objdump-18 -d "$GITHUB_WORKSPACE/cfg80211.ko" | awk '/<cfg80211_change_iface>:/{flag=1} flag{print; count++; if(count>40) exit}'
-          echo "=== ___cfg80211_scan ==="
-          llvm-objdump-18 -d "$GITHUB_WORKSPACE/cfg80211.ko" | awk '/<___cfg80211_scan>:/{flag=1} flag{print; count++; if(count>45) exit}'
-          echo "=== cfg80211_netdev_notifier_call ==="
-          llvm-objdump-18 -d "$GITHUB_WORKSPACE/cfg80211.ko" | awk '/<cfg80211_netdev_notifier_call>:/{flag=1} flag{print; count++; if(count>65) exit}'
+          echo "=== Search MotorolaMobilityLLC repos on GitHub ==="
+          curl -s "https://github.com" | python3 -c '
+          import sys, json
+          repos = json.load(sys.stdin)
+          if isinstance(repos, list):
+              for r in repos:
+                  name = r.get("name", "")
+                  if any(k in name.lower() for k in ["kernel", "wlan", "qca", "portov", "6.6", "msm"]):
+                      print(name, "->", r.get("default_branch"), r.get("updated_at"))
+          else:
+              print(repos)
+          '
+
+          echo "=== Search MotorolaMobilityLLC tags/branches for portov / W1VTS / VVTS ==="
+          curl -s "https://github.com" | python3 -c '
+          import sys, json
+          data = json.load(sys.stdin)
+          for item in data.get("items", []):
+              print(item.get("full_name"), "->", item.get("default_branch"))
+          '
           
