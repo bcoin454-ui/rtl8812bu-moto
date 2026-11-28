@@ -1,4 +1,4 @@
-name: Build 88x2bu with Official Motorola W1VT36H.22-20 Headers
+name: Build 88x2bu WEXT Mode (No cfg80211 Panic)
 
 on: [workflow_dispatch]
 
@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout Repo (stock_config & cfg80211.ko)
+      - name: Checkout Repo (stock_config)
         uses: actions/checkout@v4
 
       - name: Install tools and Clang 18
@@ -52,80 +52,7 @@ jobs:
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image modules
 
-      - name: Overlay Official Motorola W1VT36H.22-20 Headers & Patch Symvers
-        run: |
-          rm -rf ~/build/moto_headers
-          mkdir -p ~/build/moto_headers && cd ~/build/moto_headers
-          GH="https://github.com"
-          ORG="MotorolaMobilityLLC"
-          git init
-          git remote add origin "${GH}/${ORG}/kernel-msm.git"
-          git config core.sparseCheckout true
-          printf "include/\n" >> .git/info/sparse-checkout
-          git fetch --depth=1 origin "refs/tags/MMI-W1VT36H.22-20:refs/tags/MMI-W1VT36H.22-20"
-          git checkout "MMI-W1VT36H.22-20"
-
-          echo "=== Checking Motorola cfg80211.h ==="
-          ls -la include/net/cfg80211.h include/uapi/linux/nl80211.h
-          cp -f include/net/cfg80211.h ~/build/kernel/include/net/cfg80211.h
-          cp -f include/uapi/linux/nl80211.h ~/build/kernel/include/uapi/linux/nl80211.h
-          [ -f include/net/mac80211.h ] && cp -f include/net/mac80211.h ~/build/kernel/include/net/mac80211.h
-
-          CFG_KO="$GITHUB_WORKSPACE/cfg80211.ko"
-          python3 -c '
-          import subprocess, struct, re
-
-          ko = "'"$CFG_KO"'"
-          sec_out = subprocess.check_output(["readelf", "-SW", ko], text=True)
-          idx_map = {}
-          for line in sec_out.splitlines():
-              m = re.search(r"\[\s*(\d+)\]\s+(\S+)\s+\S+\s+\S+\s+([0-9a-fA-F]+)", line)
-              if m:
-                  idx_map[m.group(1)] = (m.group(2), int(m.group(3), 16))
-
-          sym_out = subprocess.check_output(["readelf", "-sW", ko], text=True)
-          with open(ko, "rb") as f:
-              data = f.read()
-
-          real = {}
-          for line in sym_out.splitlines():
-              parts = line.split()
-              if len(parts) >= 8:
-                  sym_full = parts.pop()
-                  ndx = parts.pop()
-                  if sym_full.startswith("__crc_"):
-                      sym_name = sym_full.replace("__crc_", "", 1)
-                      val = int(parts.pop(1), 16)
-                      if ndx == "ABS":
-                          crc = val & 0xffffffff
-                      elif ndx in idx_map:
-                          sec_name, sec_off = idx_map.get(ndx)
-                          chunk = data[sec_off + val : sec_off + val + 4]
-                          crc, = struct.unpack("<I", chunk)
-                      else:
-                          continue
-                      real[sym_name] = f"0x{crc:08x}"
-
-          sym_path = "'"$HOME"'/build/kernel/Module.symvers"
-          with open(sym_path) as f:
-              lines = f.readlines()
-          patched = 0
-          with open(sym_path, "w") as f:
-              for line in lines:
-                  cols = line.split("\t")
-                  if len(cols) >= 2:
-                      s_name = cols.pop(1)
-                      old_crc = cols.pop(0)
-                      new_crc = real.get(s_name, old_crc)
-                      if new_crc != old_crc:
-                          patched += 1
-                      cols.insert(0, s_name)
-                      cols.insert(0, new_crc)
-                  f.write("\t".join(cols))
-          print("Patched Module.symvers entries:", patched)
-          '
-
-      - name: Clone, Patch & Build 88x2bu Driver
+      - name: Clone, Switch to WEXT & Build 88x2bu Driver
         run: |
           rm -rf ~/build/driver
           GH_HOST="https://github.com"
@@ -135,28 +62,17 @@ jobs:
 
           sed -i 's/CONFIG_POWER_SAVING = y/CONFIG_POWER_SAVING = n/g' Makefile
           sed -i 's/CONFIG_WIFI_MONITOR = n/CONFIG_WIFI_MONITOR = y/g' Makefile
+          sed -i 's/CONFIG_CONCURRENT_MODE = y/CONFIG_CONCURRENT_MODE = n/g' Makefile
           sed -i 's/CONFIG_RTW_DEBUG = y/CONFIG_RTW_DEBUG = n/g' Makefile
           sed -i 's/-Wno-stringop-overread/-Wno-unknown-warning-option/g' Makefile
           sed -i 's/-Werror//g' Makefile
 
+          # Отключаем cfg80211 в autoconf.h, чтобы модуль работал напрямую через ядро (WEXT)
+          sed -i 's/#define CONFIG_IOCTL_CFG80211/\/\/ #define CONFIG_IOCTL_CFG80211/g' include/autoconf.h
+          sed -i 's/#define RTW_USE_CFG80211_STA_EVENT/\/\/ #define RTW_USE_CFG80211_STA_EVENT/g' include/autoconf.h
+
+          # Заменяем защищённые символы GKI в osdep_service.c
           python3 -c '
-          import re
-          p1 = "os_dep/linux/ioctl_cfg80211.c"
-          with open(p1) as f:
-              c1 = f.read()
-
-          c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;", "wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;")
-          c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed")
-
-          fix = """wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);
-          \twiphy->max_sched_scan_reqs = 0;
-          \twiphy_register(wiphy)"""
-
-          c1_new, count = re.subn(r"wiphy_register\s*\(\s*wiphy\s*\)", fix, c1)
-          assert count > 0, "wiphy_register(wiphy) not found!"
-          with open(p1, "w") as f:
-              f.write(c1_new)
-
           p2 = "os_dep/osdep_service.c"
           with open(p2) as f:
               c2 = f.read()
@@ -165,15 +81,14 @@ jobs:
           c2 = c2.replace("kernel_write(", "-EINVAL; // kernel_write(")
           with open(p2, "w") as f:
               f.write(c2)
-          print("All patches applied cleanly")
           '
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option" modules
-          modinfo ~/build/driver/88x2bu.ko | grep -E "vermagic|scmversion"
+          modinfo ~/build/driver/88x2bu.ko | grep -E "vermagic|depends"
 
       - name: Upload 88x2bu.ko
         uses: actions/upload-artifact@v4
         with:
-          name: rtl88x2bu-moto-official-gki
+          name: rtl88x2bu-wext-gki
           path: ~/build/driver/88x2bu.ko
           
