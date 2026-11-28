@@ -128,6 +128,7 @@ jobs:
           sed -i 's/-Werror//g' Makefile
 
           python3 -c '
+          import re
           p1 = "os_dep/linux/ioctl_cfg80211.c"
           with open(p1) as f:
               c1 = f.read()
@@ -135,18 +136,19 @@ jobs:
           c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;", "wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;")
           c1 = c1.replace("wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;", "// disabled self_managed")
 
-          target = "ret = wiphy_register(wiphy);"
           fix = """wiphy->regulatory_flags &= ~(REGULATORY_STRICT_REG | REGULATORY_WIPHY_SELF_MANAGED);
           \twiphy->max_sched_scan_reqs = 0;
           \twiphy->iface_combinations = NULL;
           \twiphy->n_iface_combinations = 0;
           \twiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_AP) | BIT(NL80211_IFTYPE_MONITOR);
           \twiphy->features &= ~NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
-          \t""" + target
-          assert target in c1, "wiphy_register not found!"
-          c1 = c1.replace(target, fix)
+          \twiphy_register(wiphy)"""
+
+          c1_new, count = re.subn(r"wiphy_register\s*\(\s*wiphy\s*\)", fix, c1)
+          print("Patched wiphy_register occurrences:", count)
+          assert count > 0, "wiphy_register(wiphy) not found!"
           with open(p1, "w") as f:
-              f.write(c1)
+              f.write(c1_new)
 
           p2 = "os_dep/osdep_service.c"
           with open(p2) as f:
