@@ -69,8 +69,9 @@ jobs:
           sed -i 's/-Wno-stringop-overread/-Wno-unknown-warning-option/g' Makefile
           sed -i 's/-Werror//g' Makefile
 
-          sed -i 's/#define CONFIG_IOCTL_CFG80211/\/\/ #define CONFIG_IOCTL_CFG80211/g' include/autoconf.h
-          sed -i 's/#define RTW_USE_CFG80211_STA_EVENT/\/\/ #define RTW_USE_CFG80211_STA_EVENT/g' include/autoconf.h
+          for opt in CONFIG_IOCTL_CFG80211 RTW_USE_CFG80211_STA_EVENT CONFIG_LAYER2_ROAMING CONFIG_RTW_80211K CONFIG_RTW_80211R CONFIG_RTW_WNM CONFIG_RTW_MBO; do
+            sed -i "s/#define ${opt}/\/\/ #define ${opt}/g" include/autoconf.h
+          done
 
           python3 -c '
           p2 = "os_dep/osdep_service.c"
@@ -83,7 +84,7 @@ jobs:
               f.write(c2)
           '
 
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option -UCONFIG_IOCTL_CFG80211 -URTW_USE_CFG80211_STA_EVENT" modules
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 KSRC=~/build/kernel KCFLAGS="-Wno-error -Wno-unknown-warning-option -UCONFIG_IOCTL_CFG80211 -URTW_USE_CFG80211_STA_EVENT -UCONFIG_LAYER2_ROAMING -UCONFIG_RTW_80211K -UCONFIG_RTW_80211R -UCONFIG_RTW_WNM -UCONFIG_RTW_MBO" modules
           llvm-nm -u ~/build/driver/88x2bu.ko | grep "wiphy_" && exit 1 || echo "Verified: 0 cfg80211 symbols!"
 
       - name: Upload 88x2bu.ko
